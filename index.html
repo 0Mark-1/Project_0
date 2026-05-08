@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📈 Alternate View on Inflation</title>
+
+    <!-- Plotly & PapaParse (unchanged) -->
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <!-- pako – gzip / deflate in the browser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"
+            integrity="sha512-UYlM3gzu+DEIswGhhf8kMu7Z5A2GdIPyIYoY/I5K6zNmI/VY6Rt9EZHBKexoimS74pT6nOtduZ5k39j+6eGriw=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <style>
+        :root {
+            --bg:#f8f9fa;--text:#212529;--card:white;--border:#dee2e6;
+        }
+        body.dark{--bg:#121212;--text:#e0e0e0;--card:#1e1e1e;--border:#333;}
+        body{
+            margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;
+            background:var(--bg);color:var(--text);padding:20px;line-height:1.5;
+        }
+        .container{max-width:1200px;margin:auto;}
+        h1{text-align:center;margin-bottom:10px;}
+        .controls{
+            background:var(--card);border:1px solid var(--border);border-radius:12px;
+            padding:20px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,.05);
+        }
+        .row{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:20px;}
+        .form-group{flex:1;min-width:280px;}
+        label{display:block;margin-bottom:6px;font-weight:600;}
+        select[multiple]{width:100%;height:180px;border:1px solid var(--border);border-radius:8px;
+            padding:8px;background:var(--card);color:var(--text);}
+        input[type=checkbox],input[type=color]{margin-right:8px;}
+        .color-pickers{display:flex;flex-wrap:wrap;gap:15px;}
+        .color-group{display:flex;align-items:center;gap:8px;}
+        button{
+            background:#0d6efd;color:#fff;border:none;padding:12px 24px;font-size:16px;
+            border-radius:8px;cursor:pointer;font-weight:600;
+        }
+        button:hover{background:#0b5ed7;}
+        #plot{width:100%;height:650px;background:var(--card);border-radius:12px;border:1px solid var(--border);}
+        .info{font-size:.9rem;color:#666;margin-top:10px;}
+        body.dark .info{color:#aaa;}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📈 An alternate view on Inflation</h1>
+
+    <div class="controls">
+        <div class="row">
+            <div class="form-group">
+                <label for="types">type_name (select one or more)</label>
+                <input type="text" id="search" placeholder="Search types..."
+                       style="width:100%;padding:8px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);">
+                <select id="types" multiple></select>
+            </div>
+
+            <div class="form-group">
+                <label>Metrics to plot</label>
+                <div id="metrics"></div>
+
+                <label style="margin-top:15px;">
+                    <input type="checkbox" id="dark-toggle" checked> Dark mode
+                </label>
+            </div>
+        </div>
+
+        <div class="color-pickers" id="color-pickers"></div>
+
+        <div style="margin-top:20px;text-align:center;">
+            <button id="update-btn">Update Chart</button>
+        </div>
+    </div>
+
+    <div id="plot"></div>
+    <div class="info">Data loaded from GitHub • Hover for details • Uses Plotly.js</div>
+</div>
+
+<script>
+/* ------------------- CONFIG ------------------- */
+const CSV_URL = "https://raw.githubusercontent.com/0Mark-1/Project_0/main/book2_filtered.csv.gz";
+/* Adjust the URL to the raw .csv.gz file in your repo. */
+
+/* List only the numeric columns that really exist in the CSV. */
+const NUMERIC_COLS = ["price_in_plex"];   // add more names if needed
+let df = [];
+let typeOptions = [];
+
+/* Default colours – changeable via the colour pickers */
+let metricColors = {
+    "price_in_plex": "#2ca02c"
+};
+
+/* ------------------- FETCH & DECOMPRESS ------------------- */
+async function loadData() {
+    const resp = await fetch(CSV_URL);
+    if (!resp.ok) {
+        alert("Failed to load CSV.gz – check the raw URL and repo visibility.");
+        return;
+    }
+    const buffer = await resp.arrayBuffer();          // get raw bytes
+    const uint8   = new Uint8Array(buffer);
+    const inflated = pako.inflate(uint8);             // decompress gzip
+    const decoder = new TextDecoder("utf-8");
+    const csvText = decoder.decode(inflated);         // UTF‑8 CSV string
+
+    Papa.parse(csvText, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: results => {
+            // Keep rows that have a date and at least one metric column.
+            df = results.data.filter(r =>
+                r.date && NUMERIC_COLS.some(col => r[col] != null));
+
+            // Convert date strings → Date objects
+            df.forEach(r => { if (r.date) r.date = new Date(r.date); });
+
+            // Unique type_name values
+            const set = new Set();
+            df.forEach(r => { if (r.type_name) set.add(r.type_name); });
+            typeOptions = Array.from(set).sort();
+
+            populateUI();
+            updatePlot();          // initial render
+        }
+    });
+}
+
+/* ------------------- UI SETUP ------------------- */
+function populateUI() {
+    // Types multiselect
+    const sel = document.getElementById("types");
+    sel.innerHTML = "";
+    typeOptions.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        sel.appendChild(opt);
+    });
+
+    // Search filter
+    document.getElementById("search").addEventListener("input", function () {
+        const term = this.value.toLowerCase();
+        Array.from(sel.options).forEach(o => {
+            o.style.display = o.textContent.toLowerCase().includes(term) ? "" : "none";
+        });
+    });
+
+    // Metrics checkboxes
+    const mDiv = document.getElementById("metrics");
+    mDiv.innerHTML = "";
+    NUMERIC_COLS.forEach(col => {
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = `
+            <label>
+                <input type="checkbox" value="${col}" checked>
+                ${col}
+            </label>
+        `;
+        mDiv.appendChild(wrapper);
+    });
+
+    // Colour pickers
+    const cp = document.getElementById("color-pickers");
+    cp.innerHTML = "";
+    NUMERIC_COLS.forEach(col => {
+        const grp = document.createElement("div");
+        grp.className = "color-group";
+        grp.innerHTML = `
+            <label>${col}:</label>
+            <input type="color" value="${metricColors[col]}" data-metric="${col}">
+        `;
+        cp.appendChild(grp);
+    });
+
+    // Dark‑mode toggle
+    const dm = document.getElementById("dark-toggle");
+    dm.addEventListener("change", () => {
+        document.body.classList.toggle("dark", dm.checked);
+    });
+    document.body.classList.toggle("dark", dm.checked);
+}
+
+/* ------------------- BUILD CHART ------------------- */
+function updatePlot() {
+    const selectedTypes = Array.from(document.getElementById("types")
+        .selectedOptions).map(o => o.value);
+    const selectedMetrics = Array.from(document.querySelectorAll("#metrics input:checked"))
+        .map(cb => cb.value);
+    const dark = document.getElementById("dark-toggle").checked;
+
+    if (!selectedTypes.length) { alert("Select at least one type_name."); return; }
+    if (!selectedMetrics.length) { alert("Select at least one metric."); return; }
+
+    // Update colours from the colour pickers
+    document.querySelectorAll("#color-pickers input[type=color]").forEach(p => {
+        metricColors[p.dataset.metric] = p.value;
+    });
+
+    const filtered = df.filter(r => selectedTypes.includes(r.type_name));
+    const traces = [];
+
+    selectedTypes.forEach(type => {
+        const rows = filtered.filter(r => r.type_name === type);
+        const map = {};
+        rows.forEach(r => {
+            const d = r.date.toISOString().split("T")[0];
+            if (!map[d]) map[d] = r;               // first non‑null entry for that date
+        });
+        const dates = Object.keys(map).sort();
+
+        selectedMetrics.forEach(metric => {
+            const y = dates.map(d => {
+                const row = map[d];
+                return row[metric] != null ? row[metric] : null;
+            });
+            traces.push({
+                x: dates,
+                y,
+                mode: "lines",
+                name: `${type} – ${metric}`,
+                line: {color: metricColors[metric]}
+            });
+        });
+    });
+
+    const layout = {
+        title: "Metrics per type_name",
+        xaxis: {title: "Date"},
+        yaxis: {title: "Value"},
+        legend: {title: "Series"},
+        hovermode: "x unified",
+        template: dark ? "plotly_dark" : "plotly",
+        height: 650,
+        margin: {t:60, r:30, b:60, l:60}
+    };
+
+    Plotly.newPlot("plot", traces, layout, {responsive:true});
+}
+
+/* ------------------- EVENTS ------------------- */
+document.getElementById("update-btn").addEventListener("click", updatePlot);
+
+/* ------------------- INIT ------------------- */
+window.onload = () => {
+    if (CSV_URL.includes("YOUR_USERNAME")) {
+        alert("Replace CSV_URL with the real raw GitHub link to your .csv.gz file.");
+    }
+    loadData();
+};
+</script>
+</body>
+</html>
