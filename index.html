@@ -1,337 +1,236 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📈 Alternate View on Inflation</title>
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    <style>
-        :root {
-            --bg: #f8f9fa;
-            --text: #212529;
-            --card: white;
-            --border: #dee2e6;
-        }
-        body.dark {
-            --bg: #121212;
-            --text: #e0e0e0;
-            --card: #1e1e1e;
-            --border: #333;
-        }
-        body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            padding: 20px;
-            line-height: 1.5;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        h1 {
-            text-align: center;
-            margin-bottom: 10px;
-        }
-        .controls {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        }
-        .row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .form-group {
-            flex: 1;
-            min-width: 280px;
-        }
-        label {
-            display: block;
-            margin-bottom: 6px;
-            font-weight: 600;
-        }
-        select[multiple] {
-            width: 100%;
-            height: 180px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px;
-            background: var(--card);
-            color: var(--text);
-        }
-        input[type="checkbox"], input[type="color"] {
-            margin-right: 8px;
-        }
-        .color-pickers {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        .color-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        button {
-            background: #0d6efd;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-        button:hover {
-            background: #0b5ed7;
-        }
-        #plot {
-            width: 100%;
-            height: 650px;
-            background: var(--card);
-            border-radius: 12px;
-            border: 1px solid var(--border);
-        }
-        .info {
-            font-size: 0.9rem;
-            color: #666;
-            margin-top: 10px;
-        }
-        body.dark .info {
-            color: #aaa;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <title>Price in Plex over Time</title>
+  <script src="https://cdn.plot.ly/plotly-2.25.2.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .typeahead { position: relative; width: 400px; }
+    input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
+    .suggestions {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      border: 1px solid #ccc;
+      background: #fff;
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 10;
+    }
+    .suggestion { padding: 6px 8px; cursor: pointer; }
+    .suggestion:hover, .suggestion.active { background: #f0f0f0; }
+    #plot { width: 100%; max-width: 1000px; height: 600px; }
+    label { display:block; margin-bottom: 6px; font-weight:600; }
+    .controls { margin-bottom: 12px; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📈 An alternate view on Inflation</h1>
-        
-        <div class="controls">
-            <div class="row">
-                <div class="form-group">
-                    <label for="types">type_name (select one or more)</label>
-                    <input type="text" id="search" placeholder="Search types..." style="width:100%; padding:8px; margin-bottom:8px; border-radius:6px; border:1px solid var(--border);">
-                    <select id="types" multiple></select>
-                </div>
-
-                <div class="form-group">
-                    <label>Metrics to plot</label>
-                    <div id="metrics"></div>
-                    
-                    <label style="margin-top:15px;">
-                        <input type="checkbox" id="dark-toggle" checked> Dark mode
-                    </label>
-                </div>
-            </div>
-
-            <div class="color-pickers" id="color-pickers"></div>
-
-            <div style="margin-top:20px; text-align:center;">
-                <button id="update-btn">Update Chart</button>
-            </div>
-        </div>
-
-        <div id="plot"></div>
-        <div class="info">
-            Data loaded from GitHub • Hover for details • Uses Plotly.js
-        </div>
+  <div class="controls">
+    <label for="type-input">Select type_name</label>
+    <div class="typeahead">
+      <input id="type-input" type="text" placeholder="Search type_name..." autocomplete="off" />
+      <div id="suggestions" class="suggestions" style="display:none;"></div>
     </div>
+  </div>
 
-    <script>
-        // ================== CONFIG ==================
-        const CSV_URL = "https://raw.githubusercontent.com/0Mark-1/Project_0/main/book2_filtered_from_2018.csv";
-        // Change the URL above to point to your raw CSV file on GitHub
+  <div id="plot"></div>
 
-        const NUMERIC_COLS = ["average", "volume", "price_in_plex"];
-        let df = [];
-        let typeOptions = [];
+<script>
+const CSV_URL = "https://raw.githubusercontent.com/0Mark-1/Project_0/main/book2_filtered_from_2018.csv";
 
-        // Default colors (same as Plotly defaults)
-        let metricColors = {
-            "average": "#1f77b4",
-            "volume": "#ff7f0e",
-            "price_in_plex": "#2ca02c"
-        };
+let rawRows = []; // array of objects from CSV
+let uniqueTypes = [];
 
-        // ================== LOAD CSV ==================
-        async function loadData() {
-            const response = await fetch(CSV_URL);
-            if (!response.ok) {
-                alert("Failed to load CSV. Make sure the raw URL is correct and the repo is public.");
-                return;
-            }
-            const csvText = await response.text();
-            
-            Papa.parse(csvText, {
-                header: true,
-                dynamicTyping: true,
-                skipEmptyLines: true,
-                complete: function(results) {
-                    df = results.data.filter(row => row.date && (row.average || row.volume || row.price_in_plex));
-                    
-                    // Parse dates
-                    df.forEach(row => {
-                        if (row.date) row.date = new Date(row.date);
-                    });
+function parseCSV(text) {
+  // simple CSV parser that handles quoted fields
+  const rows = [];
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0) return rows;
+  const headers = parseCSVLine(lines[0]);
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cols = parseCSVLine(lines[i]);
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j]] = cols[j] !== undefined ? cols[j] : "";
+    }
+    rows.push(obj);
+  }
+  return rows;
+}
 
-                    // Extract unique types
-                    const typesSet = new Set();
-                    df.forEach(row => {
-                        if (row.type_name) typesSet.add(row.type_name);
-                    });
-                    typeOptions = Array.from(typesSet).sort();
+function parseCSVLine(line) {
+  const res = [];
+  let cur = "", inQuotes = false;
+  for (let i=0;i<line.length;i++){
+    const ch=line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i+1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
+      } else cur += ch;
+    } else {
+      if (ch === ',') { res.push(cur); cur = ""; }
+      else if (ch === '"') { inQuotes = true; }
+      else cur += ch;
+    }
+  }
+  res.push(cur);
+  return res;
+}
 
-                    populateUI();
-                    updatePlot(); // initial plot
-                }
-            });
-        }
+function toDate(s) {
+  // try common date formats; fallback to new Date()
+  if (!s) return null;
+  // try ISO first
+  let d = new Date(s);
+  if (!isNaN(d)) return d;
+  // try yyyy-mm-dd or dd/mm/yyyy heuristics
+  const parts = s.split(/[\/\-\.]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) d = new Date(parts[0], Number(parts[1]) - 1, parts[2]);
+    else d = new Date(parts[2], Number(parts[1]) - 1, parts[0]);
+    if (!isNaN(d)) return d;
+  }
+  return null;
+}
 
-        // ================== UI SETUP ==================
-        function populateUI() {
-            // Types multiselect
-            const select = document.getElementById("types");
-            select.innerHTML = "";
-            typeOptions.forEach(type => {
-                const opt = document.createElement("option");
-                opt.value = type;
-                opt.textContent = type;
-                select.appendChild(opt);
-            });
+function numberOrNull(s) {
+  if (s === null || s === undefined || s === "") return null;
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+}
 
-            // Search filter
-            document.getElementById("search").addEventListener("input", function() {
-                const term = this.value.toLowerCase();
-                Array.from(select.options).forEach(opt => {
-                    opt.style.display = opt.textContent.toLowerCase().includes(term) ? "" : "none";
-                });
-            });
+async function loadData() {
+  const resp = await fetch(CSV_URL);
+  if (!resp.ok) throw new Error("Failed to fetch CSV");
+  const txt = await resp.text();
+  const rows = parseCSV(txt);
+  // Normalize columns: expecting at least type_name, price_in_plex, date (or timestamp)
+  rawRows = rows.map(r => {
+    return {
+      type_name: r.type_name ?? r.type ?? r.Type ?? "",
+      price_in_plex: numberOrNull(r.price_in_plex ?? r.price ?? r.Price ?? r.price_in_isk),
+      date: toDate(r.date ?? r.DATE ?? r.timestamp ?? r.time ?? r.date_time)
+    };
+  }).filter(r => r.type_name && r.price_in_plex !== null && r.date !== null);
 
-            // Metrics checkboxes
-            const metricsDiv = document.getElementById("metrics");
-            metricsDiv.innerHTML = "";
-            NUMERIC_COLS.forEach(metric => {
-                const div = document.createElement("div");
-                div.innerHTML = `
-                    <label>
-                        <input type="checkbox" value="${metric}" ${metric === "average" ? "checked" : ""}>
-                        ${metric}
-                    </label>
-                `;
-                metricsDiv.appendChild(div);
-            });
+  // get unique types sorted
+  const set = new Set(rawRows.map(r => r.type_name));
+  uniqueTypes = Array.from(set).sort((a,b)=> a.localeCompare(b));
+}
 
-            // Color pickers
-            const colorContainer = document.getElementById("color-pickers");
-            colorContainer.innerHTML = "";
-            NUMERIC_COLS.forEach(metric => {
-                const div = document.createElement("div");
-                div.className = "color-group";
-                div.innerHTML = `
-                    <label>${metric}:</label>
-                    <input type="color" value="${metricColors[metric]}" data-metric="${metric}">
-                `;
-                colorContainer.appendChild(div);
-            });
+function initTypeahead() {
+  const input = document.getElementById('type-input');
+  const sugg = document.getElementById('suggestions');
 
-            // Dark mode
-            const darkToggle = document.getElementById("dark-toggle");
-            darkToggle.addEventListener("change", () => {
-                document.body.classList.toggle("dark", darkToggle.checked);
-            });
-            // Trigger once
-            document.body.classList.toggle("dark", darkToggle.checked);
-        }
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) {
+      renderSuggestions(uniqueTypes.slice(0,50));
+      return;
+    }
+    const matches = uniqueTypes.filter(t => t.toLowerCase().includes(q)).slice(0,50);
+    renderSuggestions(matches);
+  });
 
-        // ================== BUILD CHART ==================
-        function updatePlot() {
-            const selectedTypes = Array.from(document.getElementById("types").selectedOptions).map(opt => opt.value);
-            const selectedMetrics = Array.from(document.querySelectorAll("#metrics input:checked")).map(cb => cb.value);
-            
-            const darkMode = document.getElementById("dark-toggle").checked;
+  input.addEventListener('keydown', (ev) => {
+    const items = Array.from(sugg.querySelectorAll('.suggestion'));
+    const active = sugg.querySelector('.suggestion.active');
+    let idx = items.indexOf(active);
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      if (idx < items.length - 1) {
+        if (active) active.classList.remove('active');
+        items[idx+1].classList.add('active');
+      } else if (items.length) {
+        if (active) active.classList.remove('active');
+        items[0].classList.add('active');
+      }
+    } else if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      if (idx > 0) {
+        active.classList.remove('active');
+        items[idx-1].classList.add('active');
+      } else if (items.length) {
+        if (active) active.classList.remove('active');
+        items[items.length-1].classList.add('active');
+      }
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const sel = sugg.querySelector('.suggestion.active') || items[0];
+      if (sel) selectType(sel.textContent);
+    }
+  });
 
-            if (selectedTypes.length === 0) {
-                alert("Please select at least one type_name");
-                return;
-            }
-            if (selectedMetrics.length === 0) {
-                alert("Please select at least one metric");
-                return;
-            }
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.typeahead')) {
+      sugg.style.display = 'none';
+    }
+  });
 
-            // Update color map from pickers
-            document.querySelectorAll("#color-pickers input[type=color]").forEach(picker => {
-                const metric = picker.dataset.metric;
-                metricColors[metric] = picker.value;
-            });
+  // initial list
+  renderSuggestions(uniqueTypes.slice(0,50));
+}
 
-            // Filter data
-            const filtered = df.filter(row => selectedTypes.includes(row.type_name));
+function renderSuggestions(list) {
+  const sugg = document.getElementById('suggestions');
+  sugg.innerHTML = '';
+  if (!list || list.length === 0) { sugg.style.display = 'none'; return; }
+  list.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'suggestion';
+    div.textContent = item;
+    div.addEventListener('click', () => selectType(item));
+    sugg.appendChild(div);
+  });
+  sugg.style.display = 'block';
+}
 
-            const traces = [];
-            
-            selectedTypes.forEach(type => {
-                const typeData = filtered.filter(row => row.type_name === type);
-                
-                // Simple aggregation: take first non-null per date
-                const dateMap = {};
-                typeData.forEach(row => {
-                    const dateStr = row.date.toISOString().split('T')[0];
-                    if (!dateMap[dateStr]) {
-                        dateMap[dateStr] = row;
-                    }
-                });
+function selectType(typeName) {
+  document.getElementById('type-input').value = typeName;
+  document.getElementById('suggestions').style.display = 'none';
+  updatePlotForType(typeName);
+}
 
-                const dates = Object.keys(dateMap).sort();
-                
-                selectedMetrics.forEach(metric => {
-                    const yValues = dates.map(d => {
-                        const row = dateMap[d];
-                        return row[metric] != null ? row[metric] : null;
-                    });
+function updatePlotForType(typeName) {
+  const filtered = rawRows.filter(r => r.type_name === typeName).sort((a,b) => a.date - b.date);
+  if (filtered.length === 0) {
+    Plotly.purge('plot');
+    document.getElementById('plot').innerHTML = "<p>No data for selected type.</p>";
+    return;
+  }
+  const x = filtered.map(r => r.date.toISOString());
+  const y = filtered.map(r => r.price_in_plex);
 
-                    traces.push({
-                        x: dates,
-                        y: yValues,
-                        mode: 'lines',
-                        name: `${type} – ${metric}`,
-                        line: { color: metricColors[metric] }
-                    });
-                });
-            });
+  const trace = {
+    x, y,
+    mode: 'lines+markers',
+    type: 'scatter',
+    marker: { size: 6 },
+    line: { width: 2 },
+    name: typeName
+  };
 
-            const layout = {
-                title: "Metrics per type_name",
-                xaxis: { title: "Date" },
-                yaxis: { title: "Value" },
-                legend: { title: "Series" },
-                hovermode: "x unified",
-                template: darkMode ? "plotly_dark" : "plotly",
-                height: 650,
-                margin: { t: 60, r: 30, b: 60, l: 60 }
-            };
+  const layout = {
+    title: `${typeName} — price_in_plex over time`,
+    xaxis: { title: 'Date', type: 'date' },
+    yaxis: { title: 'price_in_plex' },
+    margin: { t: 50, l: 60, r: 20, b: 60 }
+  };
 
-            Plotly.newPlot('plot', traces, layout, {responsive: true});
-        }
+  Plotly.newPlot('plot', [trace], layout, {responsive: true});
+}
 
-        // ================== EVENT LISTENERS ==================
-        document.getElementById("update-btn").addEventListener("click", updatePlot);
-
-        // ================== INIT ==================
-        window.onload = () => {
-            if (CSV_URL.includes("YOUR_USERNAME")) {
-                alert("Please update the CSV_URL in the script with your actual raw GitHub URL!");
-            }
-            loadData();
-        };
-    </script>
-</body>
-</html>
+(async function main(){
+  try {
+    await loadData();
+    initTypeahead();
+    // auto-select first type if present
+    if (uniqueTypes.length) selectType(uniqueTypes[0]);
+  } catch (err) {
+    document.getElementById('plot').innerHTML = "<pre>Error loading data: " + String(err) + "</pre>";
+  }
+})();
+</script>
