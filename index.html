@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Price in Plex over Time</title>
+  <title>Market Data - Combined from CSV Files</title>
   <script src="https://cdn.plot.ly/plotly-2.25.2.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
@@ -21,12 +21,15 @@
     }
     .suggestion { padding: 6px 8px; cursor: pointer; }
     .suggestion:hover, .suggestion.active { background: #f0f0f0; }
-    #plot { width: 100%; max-width: 1000px; height: 600px; }
+    #plot { width: 100%; max-width: 1200px; height: 700px; }
     label { display:block; margin-bottom: 6px; font-weight:600; }
     .controls { margin-bottom: 12px; }
+    .status { margin-top: 10px; font-style: italic; color: #666; }
   </style>
 </head>
 <body>
+  <h1>Market Data Explorer (Combined CSVs)</h1>
+  
   <div class="controls">
     <label for="type-input">Select type_name</label>
     <div class="typeahead">
@@ -35,16 +38,19 @@
     </div>
   </div>
 
+  <div id="status" class="status"></div>
   <div id="plot"></div>
 
 <script>
-const CSV_URL = "https://raw.githubusercontent.com/0Mark-1/Project_0/main/book2_filtered_from_2018.csv";
+// Configuration - change these as needed
+const OWNER = '0Mark-1';
+const REPO = 'Project_0';
+const BRANCH = 'main'; // or 'master'
 
-let rawRows = []; // array of objects from CSV
+let rawRows = []; // Combined data from all CSVs
 let uniqueTypes = [];
 
 function parseCSV(text) {
-  // simple CSV parser that handles quoted fields
   const rows = [];
   const lines = text.split(/\r?\n/);
   if (lines.length === 0) return rows;
@@ -64,8 +70,8 @@ function parseCSV(text) {
 function parseCSVLine(line) {
   const res = [];
   let cur = "", inQuotes = false;
-  for (let i=0;i<line.length;i++){
-    const ch=line[i];
+  for (let i=0; i<line.length; i++){
+    const ch = line[i];
     if (inQuotes) {
       if (ch === '"') {
         if (line[i+1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
@@ -81,12 +87,9 @@ function parseCSVLine(line) {
 }
 
 function toDate(s) {
-  // try common date formats; fallback to new Date()
   if (!s) return null;
-  // try ISO first
   let d = new Date(s);
   if (!isNaN(d)) return d;
-  // try yyyy-mm-dd or dd/mm/yyyy heuristics
   const parts = s.split(/[\/\-\.]/);
   if (parts.length === 3) {
     if (parts[0].length === 4) d = new Date(parts[0], Number(parts[1]) - 1, parts[2]);
@@ -102,25 +105,63 @@ function numberOrNull(s) {
   return isNaN(n) ? null : n;
 }
 
-async function loadData() {
-  const resp = await fetch(CSV_URL);
-  if (!resp.ok) throw new Error("Failed to fetch CSV");
-  const txt = await resp.text();
-  const rows = parseCSV(txt);
-  // Normalize columns: expecting at least type_name, price_in_plex, date (or timestamp)
-  rawRows = rows.map(r => {
-    return {
-      type_name: r.type_name ?? r.type ?? r.Type ?? "",
-      price_in_plex: numberOrNull(r.price_in_plex ?? r.price ?? r.Price ?? r.price_in_isk),
-      date: toDate(r.date ?? r.DATE ?? r.timestamp ?? r.time ?? r.date_time)
-    };
-  }).filter(r => r.type_name && r.price_in_plex !== null && r.date !== null);
-
-  // get unique types sorted
-  const set = new Set(rawRows.map(r => r.type_name));
-  uniqueTypes = Array.from(set).sort((a,b)=> a.localeCompare(b));
+// Fetch list of CSV files using GitHub Git Trees API (recursive)
+async function getCSVFiles() {
+  const url = `https://api.github.com/repos/${OWNER}/${REPO}/git/trees/${BRANCH}?recursive=1`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`GitHub API error: ${resp.status} ${resp.statusText}`);
+  const data = await resp.json();
+  
+  if (!data.tree) throw new Error("No tree data returned");
+  
+  return data.tree
+    .filter(item => item.type === 'blob' && item.path.toLowerCase().endsWith('.csv'))
+    .map(item => ({
+      path: item.path,
+      rawUrl: `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${item.path}`
+    }));
 }
 
+// Load and combine data from all CSVs
+async function loadAllData() {
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = 'Fetching list of CSV files...';
+  
+  const csvFiles = await getCSVFiles();
+  statusEl.textContent = `Found ${csvFiles.length} CSV file(s). Loading data...`;
+  
+  rawRows = [];
+  
+  for (let i = 0; i < csvFiles.length; i++) {
+    const file = csvFiles[i];
+    statusEl.textContent = `Loading ${i+1}/${csvFiles.length}: ${file.path}`;
+    
+    try {
+      const resp = await fetch(file.rawUrl);
+      if (!resp.ok) continue;
+      const txt = await resp.text();
+      const rows = parseCSV(txt);
+      
+      const normalized = rows.map(r => ({
+        type_name: (r.type_name ?? r.type ?? r.Type ?? "").trim(),
+        price_in_plex: numberOrNull(r.price_in_plex ?? r.price ?? r.Price ?? r.price_in_isk),
+        date: toDate(r.date ?? r.DATE ?? r.timestamp ?? r.time ?? r.date_time)
+      })).filter(r => r.type_name && r.price_in_plex !== null && r.date !== null);
+      
+      rawRows = rawRows.concat(normalized);
+    } catch (e) {
+      console.warn(`Failed to load ${file.path}`, e);
+    }
+  }
+  
+  // Get unique types
+  const set = new Set(rawRows.map(r => r.type_name));
+  uniqueTypes = Array.from(set).sort((a,b) => a.localeCompare(b));
+  
+  statusEl.textContent = `Loaded ${rawRows.length} records from ${csvFiles.length} CSV files.`;
+}
+
+// Typeahead and plotting (same as original with minor improvements)
 function initTypeahead() {
   const input = document.getElementById('type-input');
   const sugg = document.getElementById('suggestions');
@@ -128,10 +169,10 @@ function initTypeahead() {
   input.addEventListener('input', () => {
     const q = input.value.trim().toLowerCase();
     if (!q) {
-      renderSuggestions(uniqueTypes.slice(0,50));
+      renderSuggestions(uniqueTypes.slice(0, 50));
       return;
     }
-    const matches = uniqueTypes.filter(t => t.toLowerCase().includes(q)).slice(0,50);
+    const matches = uniqueTypes.filter(t => t.toLowerCase().includes(q)).slice(0, 50);
     renderSuggestions(matches);
   });
 
@@ -139,23 +180,18 @@ function initTypeahead() {
     const items = Array.from(sugg.querySelectorAll('.suggestion'));
     const active = sugg.querySelector('.suggestion.active');
     let idx = items.indexOf(active);
+    
     if (ev.key === 'ArrowDown') {
       ev.preventDefault();
-      if (idx < items.length - 1) {
+      if (idx < items.length - 1 || idx === -1) {
         if (active) active.classList.remove('active');
-        items[idx+1].classList.add('active');
-      } else if (items.length) {
-        if (active) active.classList.remove('active');
-        items[0].classList.add('active');
+        items[Math.max(0, idx + 1)].classList.add('active');
       }
     } else if (ev.key === 'ArrowUp') {
       ev.preventDefault();
       if (idx > 0) {
         active.classList.remove('active');
-        items[idx-1].classList.add('active');
-      } else if (items.length) {
-        if (active) active.classList.remove('active');
-        items[items.length-1].classList.add('active');
+        items[idx - 1].classList.add('active');
       }
     } else if (ev.key === 'Enter') {
       ev.preventDefault();
@@ -165,19 +201,19 @@ function initTypeahead() {
   });
 
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.typeahead')) {
-      sugg.style.display = 'none';
-    }
+    if (!e.target.closest('.typeahead')) sugg.style.display = 'none';
   });
 
-  // initial list
-  renderSuggestions(uniqueTypes.slice(0,50));
+  renderSuggestions(uniqueTypes.slice(0, 50));
 }
 
 function renderSuggestions(list) {
   const sugg = document.getElementById('suggestions');
   sugg.innerHTML = '';
-  if (!list || list.length === 0) { sugg.style.display = 'none'; return; }
+  if (!list || list.length === 0) {
+    sugg.style.display = 'none';
+    return;
+  }
   list.forEach(item => {
     const div = document.createElement('div');
     div.className = 'suggestion';
@@ -195,42 +231,53 @@ function selectType(typeName) {
 }
 
 function updatePlotForType(typeName) {
-  const filtered = rawRows.filter(r => r.type_name === typeName).sort((a,b) => a.date - b.date);
+  const filtered = rawRows
+    .filter(r => r.type_name === typeName)
+    .sort((a, b) => a.date - b.date);
+
   if (filtered.length === 0) {
     Plotly.purge('plot');
     document.getElementById('plot').innerHTML = "<p>No data for selected type.</p>";
     return;
   }
-  const x = filtered.map(r => r.date.toISOString());
+
+  const x = filtered.map(r => r.date.toISOString().split('T')[0]); // cleaner date
   const y = filtered.map(r => r.price_in_plex);
 
   const trace = {
     x, y,
     mode: 'lines+markers',
     type: 'scatter',
-    marker: { size: 6 },
+    marker: { size: 5 },
     line: { width: 2 },
     name: typeName
   };
 
   const layout = {
-    title: `${typeName} — price_in_plex over time`,
+    title: `${typeName} — Combined price_in_plex over time`,
     xaxis: { title: 'Date', type: 'date' },
     yaxis: { title: 'price_in_plex' },
-    margin: { t: 50, l: 60, r: 20, b: 60 }
+    margin: { t: 80, l: 70, r: 30, b: 70 },
+    hovermode: 'closest'
   };
 
-  Plotly.newPlot('plot', [trace], layout, {responsive: true});
+  Plotly.newPlot('plot', [trace], layout, { responsive: true });
 }
 
-(async function main(){
+(async function main() {
   try {
-    await loadData();
+    await loadAllData();
+    if (uniqueTypes.length === 0) {
+      document.getElementById('status').innerHTML += '<br><strong style="color:red;">No valid market data found.</strong>';
+      return;
+    }
     initTypeahead();
-    // auto-select first type if present
-    if (uniqueTypes.length) selectType(uniqueTypes[0]);
+    selectType(uniqueTypes[0]); // auto-select first
   } catch (err) {
-    document.getElementById('plot').innerHTML = "<pre>Error loading data: " + String(err) + "</pre>";
+    console.error(err);
+    document.getElementById('status').innerHTML = `<strong style="color:red;">Error: ${err.message}</strong>`;
   }
 })();
 </script>
+</body>
+</html>
